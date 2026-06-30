@@ -1,0 +1,83 @@
+name: Build & Deploy
+
+on:
+  # Manual trigger from the Actions tab.
+  workflow_dispatch:
+  # Run on every push to main so the site rebuilds when code changes.
+  push:
+    branches: [main]
+  # Daily run. Cron is in UTC. 02:30 UTC = 10:30 Beijing.
+  schedule:
+    - cron: "30 2 * * *"
+
+# Allow only one concurrent deployment; cancel in-progress runs that get
+# superseded by a newer push so we never deploy stale artifacts.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install deps
+        run: npm install --no-audit --no-fund
+
+      - name: Restore summary/image cache
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: digest-cache-${{ github.run_id }}
+          restore-keys: |
+            digest-cache-
+
+      - name: Generate digest
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          AI_NEWS_DIGEST_OPEN: "0"
+          AI_NEWS_DIGEST_DIST: "dist"
+        run: npx tsx src/index.ts
+
+      - name: Add .nojekyll
+        run: touch dist/.nojekyll
+
+      - name: Add 404 page
+        run: |
+          cat > dist/404.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="zh-CN"><head><meta charset="UTF-8">
+          <title>404 · AI 新闻日报</title>
+          <meta http-equiv="refresh" content="0; url=/">
+          <style>body{font-family:-apple-system,sans-serif;background:#f5f7fb;color:#0a0e1a;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}a{color:#5b5bff}</style>
+          </head><body><p>页面不存在 · <a href="/">返回首页</a></p></body></html>
+          EOF
+
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
